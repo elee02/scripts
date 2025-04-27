@@ -235,3 +235,63 @@ If a blacklist entry falls outside the target directory, it will be silently ign
 
 For a rigorous examination of the underlying architecture and module interactions, consult **system_architecture.md**.
 
+## Implementation Using `du` and `tree`
+
+The `disk_analyzer.sh` script is built on top of the following core Unix/Linux command-line tools:
+
+1. **`du` (Disk Usage):**
+   - Used to calculate the size of directories and files.
+   - Example: `du -sh /path/to/dir` provides a human-readable summary of the directory size.
+   - For depth-limited traversal: `du --max-depth=N`.
+
+2. **`tree` (Directory Tree Visualization):**
+   - Used to render a tree-like structure of directories and files.
+   - Example: `tree -L N /path/to/dir` limits the depth of the tree to `N` levels.
+
+3. **`find` (Filesystem Traversal):**
+   - Used to locate files and directories based on various criteria (e.g., size, name, depth).
+   - Example: `find /path/to/dir -maxdepth N -type d` lists directories up to depth `N`.
+
+4. **`sort` (Sorting):**
+   - Used to sort the output of commands by size, name, or other criteria.
+   - Example: `sort -h` sorts human-readable sizes.
+
+5. **`awk` and `xargs` (Stream Processing):**
+   - `awk` is used for text processing and filtering.
+   - `xargs` is used to build and execute commands from standard input.
+
+### Example Workflow
+
+1. **Directory Size Calculation:**
+   - Use `du` to calculate sizes:
+     ```bash
+     du -h --max-depth=2 /path/to/dir | sort -h
+     ```
+
+2. **Tree Visualization:**
+   - Use `tree` for a hierarchical view:
+     ```bash
+     tree -L 2 /path/to/dir
+     ```
+
+3. **Filtering by Size:**
+   - Use `find` to filter directories by size:
+     ```bash
+     find /path/to/dir -type d -size +10M
+     ```
+
+4. **Combining Tools:**
+   - Combine `du`, `find`, and `sort` for advanced filtering and sorting:
+     ```bash
+     du -h --max-depth=2 /path/to/dir | sort -h | awk '$1 > 10 {print $0}'
+     ```
+
+5. **Whitelist and Blacklist Patterns:**
+   - Use `grep` or `awk` to include/exclude paths based on patterns.
+   - Example:
+     ```bash
+     du -h --max-depth=2 /path/to/dir | grep -E 'pattern'
+     ```
+
+These tools form the foundation of the `disk_analyzer.sh` script, enabling efficient and modular implementation of its features.
+

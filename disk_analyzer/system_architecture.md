@@ -124,6 +124,72 @@ Responsible for formatting and emitting the scan results.
 
 - Support for tree‑style rendering via `-t` / `--tree`, which prints the directory hierarchy with indentation by depth. This flag purely affects presentation and may be used alongside any filtering, sorting, or traversal options without conflict.
 
+## Implementation Details Using `du` and `tree`
+
+The `disk_analyzer.sh` script leverages the following Unix/Linux command-line tools to implement its core functionality:
+
+1. **`du` (Disk Usage):**
+   - Primary tool for calculating directory and file sizes.
+   - Supports depth-limited traversal with the `--max-depth` option.
+   - Example: `du -h --max-depth=2 /path/to/dir` calculates sizes up to 2 levels deep.
+
+2. **`tree` (Directory Tree Visualization):**
+   - Used for rendering hierarchical directory structures.
+   - Example: `tree -L 2 /path/to/dir` limits the tree depth to 2 levels.
+
+3. **`find` (Filesystem Traversal):**
+   - Used for locating files and directories based on criteria like size, name, and depth.
+   - Example: `find /path/to/dir -maxdepth 2 -type d` lists directories up to depth 2.
+
+4. **`sort` (Sorting):**
+   - Used to sort output by size, name, or other criteria.
+   - Example: `sort -h` sorts human-readable sizes in ascending order.
+
+5. **`awk` and `xargs` (Stream Processing):**
+   - `awk` is used for filtering and processing text output.
+   - `xargs` is used to build and execute commands from input streams.
+
+### Integration Workflow
+
+1. **Filesystem Traversal:**
+   - Use `find` to traverse directories and apply filters (e.g., depth, size).
+   - Example: `find /path/to/dir -maxdepth 2 -type d -size +10M`.
+
+2. **Size Calculation:**
+   - Use `du` to calculate sizes for directories and files.
+   - Example: `du -h --max-depth=2 /path/to/dir`.
+
+3. **Sorting and Filtering:**
+   - Use `sort` and `awk` to sort and filter results.
+   - Example: `du -h --max-depth=2 /path/to/dir | sort -h | awk '$1 > 10 {print $0}'`.
+
+4. **Tree Rendering:**
+   - Use `tree` for a visual representation of the directory structure.
+   - Example: `tree -L 2 /path/to/dir`.
+
+5. **Pattern Matching:**
+   - Use `grep` or `awk` to apply whitelist and blacklist patterns.
+   - Example: `du -h --max-depth=2 /path/to/dir | grep -E 'pattern'`.
+
+### Example Command Combinations
+
+- **Basic Size Analysis:**
+  ```bash
+  du -h --max-depth=2 /path/to/dir | sort -h
+  ```
+
+- **Filtered Analysis:**
+  ```bash
+  find /path/to/dir -type d -size +10M | xargs du -h | sort -h
+  ```
+
+- **Tree Visualization:**
+  ```bash
+  tree -L 2 /path/to/dir
+  ```
+
+These tools provide a robust foundation for implementing the features described in the `disk_analyzer.sh` script, ensuring compatibility, performance, and maintainability.
+
 ## Detailed Operational Workflow
 
 1. **Bootstrap & Defaults:** Initialize parameters to defaults (`LEVEL=1`, `MIN_SIZE_BYTES=1048576`, `SORT=size`, `REVERSE=false`, etc.).
