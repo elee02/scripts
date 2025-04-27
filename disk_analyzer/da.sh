@@ -333,11 +333,9 @@ print_tree() {
         disp_size=$(numfmt --to=iec --suffix=B "$size_bytes")
     fi
     
-    # Print current node (no indent for root)
-    if [[ "$path" == "$TARGET_DIR" ]]; then
+    # Print root node only once
+    if [[ "$depth" -eq 0 ]]; then
         echo "[${disp_size}]  ${basename}"
-    else
-        echo -e "${indent}[${disp_size}]  ${basename}"
     fi
     
     # Stop recursion if reached depth limit
@@ -426,26 +424,31 @@ print_tree() {
         fi
     fi
     
-    # Process each child once with proper branch symbols
+    # Process each child with proper indent and symbols
     local total=${#entries[@]}
     for i in "${!entries[@]}"; do
         local entry="${entries[$i]}"
         local child="${entry#*$'\t'}"
-        
-        # Determine branch symbols
+        local child_size="${entry%%$'\t'*}"
+        local child_basename=$(basename "$child")
+        local disp_child_size="$child_size"
+        if [[ "$HUMAN_READABLE" == true ]]; then
+            disp_child_size=$(numfmt --to=iec --suffix=B "$child_size")
+        fi
+
         local branch next_indent
         if [[ $i -eq $((total-1)) ]]; then
-            # Last item gets corner branch and spaces for indent
             branch="└── "
             next_indent="    "
         else
-            # Other items get T-branch and vertical line for indent
             branch="├── "
             next_indent="│   "
         fi
-        
-        # Recursively process this child with appropriate indent
-        print_tree "$child" "${indent}${branch}" $((depth+1)) "$([[ $i -eq $((total-1)) ]] && echo true || echo false)"
+
+        echo -e "${indent}${branch}[${disp_child_size}]  ${child_basename}"
+
+        print_tree "$child" "${indent}${next_indent}" $((depth+1)) \
+          "$([[ $i -eq $((total-1)) ]] && echo true || echo false)"
     done
 }
 
