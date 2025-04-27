@@ -107,12 +107,6 @@ if [[ "$SHOW_HIDDEN" = false ]]; then
     find_opts+=("-not" "-path" "*/.*")
 fi
 
-# Build du command options
-du_opts=("-b") # Always use bytes for internal calculations
-if [[ "$LEVEL" -gt 0 ]]; then
-    du_opts+=("--max-depth=$LEVEL")
-fi
-
 # Matches a path against a pattern like tree's -P option
 match_pattern() {
     local path="$1"
@@ -201,100 +195,151 @@ path_contains_ignore() {
 # Function to generate size list
 generate_size_list() {
     local target="$1"
-    
-    # First pass to get all directory sizes
+    # Build a map of all paths -> sizes
     local size_map_file=$(mktemp)
-    # Use level limit if specified
-    local level_opt=""
-    if [[ "$LEVEL_SET" == true ]]; then
-        level_opt="--max-depth=$LEVEL"
-    fi
-    sudo du -a $level_opt "${du_opts[@]}" "$target" | sort -k2 | tee "$size_map_file" > /dev/null
-    
-    # Second pass to apply min-size filtering
-    local result_file=$(mktemp)
-    
-    while read -r size path; do
-        # Skip if this path contains an ignored component
-        if [[ "$(path_contains_ignore "$path")" == "true" ]]; then
-            continue
-        fi
-        
-        # Check if this path should be excluded due to min-size
-        local parent_path=$(dirname "$path")
-        # Get exact parent size to avoid multiple matches
-        local parent_size=$(awk -v p="$parent_path" '$2 == p {print $1; exit}' "$size_map_file")
-        
-        # Skip if size is below cut threshold
-        if [[ "$size" -lt "$CUT_SIZE_BYTES" ]]; then
-            continue
-        fi
-        
-        # Skip if level is set and this path exceeds the level depth
-        if [[ "$LEVEL_SET" == true ]]; then
-            local rel_path="${path#$target/}"
-            local depth=$(echo "$rel_path" | tr -cd '/' | wc -c)
-            if [[ $depth -ge $LEVEL ]]; then
-                continue
-            fi
-        fi
-        
-        # Skip if parent is below min-size (unless it's the target)
-        if [[ "$parent_size" -lt "$MIN_SIZE_BYTES" && "$path" != "$target" ]]; then
-            continue
-        fi
-        
-        # Skip if pattern is specified and it doesn't match
-        if [[ -n "$PATTERN" ]]; then
-            if [[ "$(match_pattern "$path" "$PATTERN")" != "true" ]]; then
-                continue
-            fi
-        fi
-        
-        # Format size if human readable
-        local display_size="$size"
-        if [[ "$HUMAN_READABLE" = true ]]; then
-            display_size=$(numfmt --to=iec --suffix=B "$size")
-        fi
-        
-        printf "%s\t%s\n" "$display_size" "$path"
-    done < "$size_map_file" > "$result_file"
-    
-    # Apply sorting and optional grouping
-    # Capture sorted output
-    if [[ "$SORT_METHOD" == "size" ]]; then
-        if [[ "$REVERSE" = true ]]; then
-            sorted_output=$(sort -h -k1 "$result_file")
-        else
-            sorted_output=$(sort -h -r -k1 "$result_file")
-        fi
-    elif [[ "$SORT_METHOD" == "name" ]]; then
-        sorted_output=$(sort -k2 "$result_file")
-    else
-        sorted_output=$(cat "$result_file")
-    fi
 
-    # Group files and directories if requested
-    if [[ "$FILES_FIRST" == true || "$DIRS_FIRST" == true ]]; then
-        files_output=""
-        dirs_output=""
-        while IFS=$'\t' read -r sz p; do
-            if [[ -f "$p" ]]; then
-                files_output+="${sz}\t${p}\n"
+    # Always get full directory sizes from all sub-levels (-a -b)
+    sudo du -a -b "$target" | sort -k2 > "$size_map_file"
+
+    declare -A SIZE_MAP
+    while read -r size path; do
+        SIZE_MAP["$path"]="$size"
+    done < "$size_map_file"
+
+    # Use a queue for all directories to visit (BFS approach)
+    local queue=("$target")
+    local visited_files=()
+
+    # Function to sort file/dir lists safely
+    sort_items() {
+        local array=("${!1}")
+        local tmpfile=$(mktemp)
+
+        # Build lines of "size<TAB>path"
+        for p in "${array[@]}"; do
+            local sz="${SIZE_MAP["$p"]}"
+            echo -e "${sz}\t${p}"
+        done > "$tmpfile"
+
+        if [[ "$SORT_METHOD" == "size" ]]; then
+            if [[ "$REVERSE" == true ]]; then
+                sort -n -k1 "$tmpfile" | cut -f2-
             else
-                dirs_output+="${sz}\t${p}\n"
+                sort -rn -k1 "$tmpfile" | cut -f2-
             fi
-        done <<< "$sorted_output"
-        if [[ "$FILES_FIRST" == true ]]; then
-            printf "%b" "$files_output$dirs_output"
+        elif [[ "$SORT_METHOD" == "name" ]]; then
+            cut -f2- "$tmpfile" | sort $([[ "$REVERSE" == true ]] && echo "-r")
         else
-            printf "%b" "$dirs_output$files_output"
+            cut -f2- "$tmpfile"
         fi
-    else
-        printf "%s\n" "$sorted_output"
-    fi
-    
-    rm "$size_map_file" "$result_file"
+
+        rm "$tmpfile"
+    }
+
+    while [[ ${#queue[@]} -gt 0 ]]; do
+        local current="${queue[0]}"
+        queue=("${queue[@]:1}")  # dequeue
+
+        # Collect immediate children of 'current'
+        local files=() dirs=()
+        while IFS= read -r child; do
+            [[ "$child" == "$current" ]] && continue
+            local child_size="${SIZE_MAP["$child"]}"
+            # Filters: ignore, min-size, cut-size, pattern, etc.
+            if [[ -z "$child_size" ]] || [[ "$(path_contains_ignore "$child")" == "true" ]]; then
+                continue
+            fi
+            if (( child_size < CUT_SIZE_BYTES )); then
+                continue
+            fi
+            local parent_size="${SIZE_MAP["$(dirname "$child")"]}"
+            if [[ -n "$parent_size" && "$parent_size" -lt "$MIN_SIZE_BYTES" && "$child" != "$target" ]]; then
+                continue
+            fi
+            if [[ -n "$PATTERN" && "$(match_pattern "$child" "$PATTERN")" != "true" ]]; then
+                continue
+            fi
+
+            # Split into files or dirs
+            if [[ -d "$child" ]]; then
+                dirs+=("$child")
+            else
+                files+=("$child")
+            fi
+        done < <(find "$current" -mindepth 1 -maxdepth 1 -print 2>/dev/null)
+
+        # Sort files or dirs by name or size
+        if [[ "$FILES_FIRST" == true ]]; then
+            files=($(sort_items files[@]))
+            dirs=($(sort_items dirs[@]))
+        elif [[ "$DIRS_FIRST" == true ]]; then
+            dirs=($(sort_items dirs[@]))
+            files=($(sort_items files[@]))
+        else
+            # Normal sort
+            all=("${files[@]}" "${dirs[@]}")
+            all=($(sort_items all[@]))
+            files=(); dirs=()
+            # We'll keep them in merged order
+            for p in "${all[@]}"; do
+                if [[ -d "$p" ]]; then
+                    dirs+=("$p")
+                else
+                    files+=("$p")
+                fi
+            done
+        fi
+
+        # Print current directory if it hasn't been printed yet
+        if [[ " ${visited_files[*]} " != *" $current "* ]]; then
+            local sz="${SIZE_MAP["$current"]}"
+            local disp_sz="$sz"
+            if [[ "$HUMAN_READABLE" == true ]]; then
+                disp_sz=$(numfmt --to=iec --suffix=B "$sz")
+            fi
+            printf "%s\t%s\n" "$disp_sz" "$current"
+            visited_files+=("$current")
+        fi
+
+        # Print files in current
+        for f in "${files[@]}"; do
+            if [[ " ${visited_files[*]} " != *" $f "* ]]; then
+                local sz="${SIZE_MAP["$f"]}"
+                local disp_sz="$sz"
+                if [[ "$HUMAN_READABLE" == true ]]; then
+                    disp_sz=$(numfmt --to=iec --suffix=B "$sz")
+                fi
+                printf "%s\t%s\n" "$disp_sz" "$f"
+                visited_files+=("$f")
+            fi
+        done
+
+        # Enqueue and print dirs
+        for d in "${dirs[@]}"; do
+            if [[ " ${visited_files[*]} " != *" $d "* ]]; then
+                # Print directory immediately (before processing their children)
+                local sz="${SIZE_MAP["$d"]}"
+                local disp_sz="$sz"
+                if [[ "$HUMAN_READABLE" == true ]]; then
+                    disp_sz=$(numfmt --to=iec --suffix=B "$sz")
+                fi
+                printf "%s\t%s\n" "$disp_sz" "$d"
+                visited_files+=("$d")
+                # Queue this directory for further traversal if within depth
+                if [[ "$LEVEL_SET" == true ]]; then
+                    local rel_path="${d#$target/}"
+                    local depth=$(echo "$rel_path" | tr -cd '/' | wc -c)
+                    if [[ $depth -lt $LEVEL ]]; then
+                        queue+=("$d")
+                    fi
+                else
+                    queue+=("$d")
+                fi
+            fi
+        done
+    done
+
+    rm "$size_map_file"
 }
 
 # Recursive function to print tree with du-style summary and options
