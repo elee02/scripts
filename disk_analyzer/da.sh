@@ -303,6 +303,11 @@ generate_size_list() {
 
         # Print files in current
         for f in "${files[@]}"; do
+            local rel_path="${f#$target/}"
+            local depth=$(echo "$rel_path" | tr -cd '/' | wc -c)
+            if [[ "$LEVEL_SET" == true && $depth -ge $LEVEL ]]; then
+                continue
+            fi
             if [[ " ${visited_files[*]} " != *" $f "* ]]; then
                 local sz="${SIZE_MAP["$f"]}"
                 local disp_sz="$sz"
@@ -316,6 +321,11 @@ generate_size_list() {
 
         # Enqueue and print dirs
         for d in "${dirs[@]}"; do
+            local rel_path="${d#$target/}"
+            local depth=$(echo "$rel_path" | tr -cd '/' | wc -c)
+            if [[ "$LEVEL_SET" == true && $depth -ge $LEVEL ]]; then
+                continue
+            fi
             if [[ " ${visited_files[*]} " != *" $d "* ]]; then
                 # Print directory immediately (before processing their children)
                 local sz="${SIZE_MAP["$d"]}"
@@ -327,9 +337,7 @@ generate_size_list() {
                 visited_files+=("$d")
                 # Queue this directory for further traversal if within depth
                 if [[ "$LEVEL_SET" == true ]]; then
-                    local rel_path="${d#$target/}"
-                    local depth=$(echo "$rel_path" | tr -cd '/' | wc -c)
-                    if [[ $depth -lt $LEVEL ]]; then
+                    if [[ $depth -lt $((LEVEL - 1)) ]]; then
                         queue+=("$d")
                     fi
                 else
@@ -370,7 +378,7 @@ print_tree() {
     fi
     
     # Get cumulative size
-    local size_bytes=$(du -sb "$path" 2>/dev/null | cut -f1)
+    local size_bytes=$(sudo du -sb "$path" 2>/dev/null | cut -f1)
     
     # Format size display
     local disp_size=$size_bytes
@@ -378,19 +386,25 @@ print_tree() {
         disp_size=$(numfmt --to=iec --suffix=B "$size_bytes")
     fi
     
-    # Print root node only once
-    if [[ "$depth" -eq 0 ]]; then
-        echo "[${disp_size}]  ${basename}"
+    # Remove or comment the condition that returns if directory size < MIN_SIZE
+    # if [[ "$path" != "$TARGET_DIR" && $size_bytes -lt $MIN_SIZE_BYTES ]]; then
+    #     return
+    # fi
+
+    # Instead, only skip printing if below MIN_SIZE but continue recursion
+    local should_print=true
+    if [[ "$path" != "$TARGET_DIR" && $size_bytes -lt $MIN_SIZE_BYTES ]]; then
+        should_print=false
     fi
+
+    # Remove the block that prints the node at depth=0 or if should_print
+    # if [[ "$depth" -eq 0 || "$should_print" == true ]]; then
+    #     echo "[${disp_size}]  ${basename}"
+    # fi
     
     # Stop recursion if reached depth limit
     # Stop if we've reached level limit and it's set explicitly
     if [[ "$LEVEL_SET" == true && $depth -ge $LEVEL ]]; then
-        return
-    fi
-    
-    # If below min-size, treat as leaf and do not descend
-    if [[ "$path" != "$TARGET_DIR" && $size_bytes -lt $MIN_SIZE_BYTES ]]; then
         return
     fi
     
@@ -420,8 +434,8 @@ print_tree() {
                 fi
             fi
             
-            # Get child's size safely
-            local child_size=$(du -sb "$child" 2>/dev/null | cut -f1)
+            # Get child's size with sudo
+            local child_size=$(sudo du -sb "$child" 2>/dev/null | cut -f1)
             
             # Skip if below cut threshold
             if (( child_size < CUT_SIZE_BYTES )); then
@@ -432,7 +446,8 @@ print_tree() {
             entries+=("${child_size}$(printf '\t')${child}")
         fi
     done < <(
-        find "$path" -mindepth 1 -maxdepth 1 \
+        # Use sudo find
+        sudo find "$path" -mindepth 1 -maxdepth 1 \
             $( [[ "$SHOW_HIDDEN" == false ]] && echo "-not -path '*/.*'" ) \
             -print
     )
@@ -499,6 +514,15 @@ print_tree() {
 
 # Function to generate tree view with accurate du summary
 generate_tree_view() {
+    # Print root node once
+    local size_bytes=$(sudo du -sb "$TARGET_DIR" 2>/dev/null | cut -f1)
+    local disp_size="$size_bytes"
+    if [[ "$HUMAN_READABLE" == true ]]; then
+        disp_size=$(numfmt --to=iec --suffix=B "$size_bytes")
+    fi
+    echo "[${disp_size}]  $(basename "$TARGET_DIR")"
+
+    # Then recurse into children
     print_tree "$TARGET_DIR" "" 0
 }
 
