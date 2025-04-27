@@ -260,17 +260,38 @@ generate_size_list() {
         printf "%s\t%s\n" "$display_size" "$path"
     done < "$size_map_file" > "$result_file"
     
-    # Apply sorting
+    # Apply sorting and optional grouping
+    # Capture sorted output
     if [[ "$SORT_METHOD" == "size" ]]; then
         if [[ "$REVERSE" = true ]]; then
-            sort -h -k1 "$result_file"
+            sorted_output=$(sort -h -k1 "$result_file")
         else
-            sort -h -r -k1 "$result_file"
+            sorted_output=$(sort -h -r -k1 "$result_file")
         fi
     elif [[ "$SORT_METHOD" == "name" ]]; then
-        sort -k2 "$result_file"
+        sorted_output=$(sort -k2 "$result_file")
     else
-        cat "$result_file"
+        sorted_output=$(cat "$result_file")
+    fi
+
+    # Group files and directories if requested
+    if [[ "$FILES_FIRST" == true || "$DIRS_FIRST" == true ]]; then
+        files_output=""
+        dirs_output=""
+        while IFS=$'\t' read -r sz p; do
+            if [[ -f "$p" ]]; then
+                files_output+="${sz}\t${p}\n"
+            else
+                dirs_output+="${sz}\t${p}\n"
+            fi
+        done <<< "$sorted_output"
+        if [[ "$FILES_FIRST" == true ]]; then
+            printf "%b" "$files_output$dirs_output"
+        else
+            printf "%b" "$dirs_output$files_output"
+        fi
+    else
+        printf "%s\n" "$sorted_output"
     fi
     
     rm "$size_map_file" "$result_file"
