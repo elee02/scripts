@@ -386,22 +386,11 @@ print_tree() {
         disp_size=$(numfmt --to=iec --suffix=B "$size_bytes")
     fi
     
-    # Remove or comment the condition that returns if directory size < MIN_SIZE
-    # if [[ "$path" != "$TARGET_DIR" && $size_bytes -lt $MIN_SIZE_BYTES ]]; then
-    #     return
-    # fi
-
-    # Instead, only skip printing if below MIN_SIZE but continue recursion
-    local should_print=true
+    # Reintroduce the condition to skip entire directory if below MIN_SIZE
     if [[ "$path" != "$TARGET_DIR" && $size_bytes -lt $MIN_SIZE_BYTES ]]; then
-        should_print=false
+        return
     fi
 
-    # Remove the block that prints the node at depth=0 or if should_print
-    # if [[ "$depth" -eq 0 || "$should_print" == true ]]; then
-    #     echo "[${disp_size}]  ${basename}"
-    # fi
-    
     # Stop recursion if reached depth limit
     # Stop if we've reached level limit and it's set explicitly
     if [[ "$LEVEL_SET" == true && $depth -ge $LEVEL ]]; then
