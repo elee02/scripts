@@ -293,6 +293,9 @@ generate_size_list() {
         # Print current directory if it hasn't been printed yet
         if [[ " ${visited_files[*]} " != *" $current "* ]]; then
             local sz="${SIZE_MAP["$current"]}"
+            if [[ -z "$sz" ]]; then
+                continue
+            fi
             local disp_sz="$sz"
             if [[ "$HUMAN_READABLE" == true ]]; then
                 disp_sz=$(numfmt --to=iec --suffix=B "$sz")
@@ -310,6 +313,9 @@ generate_size_list() {
             fi
             if [[ " ${visited_files[*]} " != *" $f "* ]]; then
                 local sz="${SIZE_MAP["$f"]}"
+                if [[ -z "$sz" ]]; then
+                    continue
+                fi
                 local disp_sz="$sz"
                 if [[ "$HUMAN_READABLE" == true ]]; then
                     disp_sz=$(numfmt --to=iec --suffix=B "$sz")
@@ -329,6 +335,9 @@ generate_size_list() {
             if [[ " ${visited_files[*]} " != *" $d "* ]]; then
                 # Print directory immediately (before processing their children)
                 local sz="${SIZE_MAP["$d"]}"
+                if [[ -z "$sz" ]]; then
+                    continue
+                fi
                 local disp_sz="$sz"
                 if [[ "$HUMAN_READABLE" == true ]]; then
                     disp_sz=$(numfmt --to=iec --suffix=B "$sz")
